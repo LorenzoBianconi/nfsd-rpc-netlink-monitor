@@ -129,11 +129,14 @@ static int recv_handler(struct nl_msg *msg, void *arg)
 	if (tb[NFSD_ATTR_RPC_STATUS_FLAGS])
 		printf(" 0x%08x", nla_get_u32(tb[NFSD_ATTR_RPC_STATUS_FLAGS]));
 
-	if (tb[NFSD_ATTR_RPC_STATUS_PC_NAME])
-		printf(" %s", nla_get_string(tb[NFSD_ATTR_RPC_STATUS_PC_NAME]));
+	if (tb[NFSD_ATTR_RPC_STATUS_PROG])
+		printf(" %d", nla_get_u32(tb[NFSD_ATTR_RPC_STATUS_PROG]));
 
 	if (tb[NFSD_ATTR_RPC_STATUS_VERSION])
 		printf(" NFS%d", nla_get_u8(tb[NFSD_ATTR_RPC_STATUS_VERSION]));
+
+	if (tb[NFSD_ATTR_RPC_STATUS_PROC])
+		printf(" %d", nla_get_u32(tb[NFSD_ATTR_RPC_STATUS_PROC]));
 
 	if (tb[NFSD_ATTR_RPC_STATUS_SERVICE_TIME])
 		printf(" %ld",
