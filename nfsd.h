@@ -1,25 +1,23 @@
 /* SPDX-License-Identifier: ((GPL-2.0 WITH Linux-syscall-note) OR BSD-3-Clause) */
 /* Do not edit directly, auto-generated from: */
-/*	Documentation/netlink/specs/nfsd_server.yaml */
+/*	Documentation/netlink/specs/nfsd.yaml */
 /* YNL-GEN uapi header */
 
-#ifndef _UAPI_LINUX_NFSD_SERVER_H
-#define _UAPI_LINUX_NFSD_SERVER_H
+#ifndef _UAPI_LINUX_NFSD_H
+#define _UAPI_LINUX_NFSD_H
 
-#define NFSD_SERVER_FAMILY_NAME		"nfsd_server"
-#define NFSD_SERVER_FAMILY_VERSION	1
+#define NFSD_FAMILY_NAME	"nfsd"
+#define NFSD_FAMILY_VERSION	1
 
-enum nfsd_rpc_status_comp_attr {
-	NFSD_ATTR_RPC_STATUS_COMP_UNSPEC,
-	NFSD_ATTR_RPC_STATUS_COMP_OP,
+enum {
+	NFSD_ATTR_COMPOUND_OP = 1,
 
-	__NFSD_ATTR_RPC_STATUS_COMP_MAX,
-	NFSD_ATTR_RPC_STATUS_COMP_MAX = (__NFSD_ATTR_RPC_STATUS_COMP_MAX - 1)
+	__NFSD_ATTR_COMPOUND_MAX,
+	NFSD_ATTR_COMPOUND_MAX = (__NFSD_ATTR_COMPOUND_MAX - 1)
 };
 
-enum nfsd_rpc_status_attr {
-	NFSD_ATTR_RPC_STATUS_UNSPEC,
-	NFSD_ATTR_RPC_STATUS_XID,
+enum {
+	NFSD_ATTR_RPC_STATUS_XID = 1,
 	NFSD_ATTR_RPC_STATUS_FLAGS,
 	NFSD_ATTR_RPC_STATUS_PROG,
 	NFSD_ATTR_RPC_STATUS_VERSION,
@@ -32,15 +30,14 @@ enum nfsd_rpc_status_attr {
 	NFSD_ATTR_RPC_STATUS_DADDR6,
 	NFSD_ATTR_RPC_STATUS_SPORT,
 	NFSD_ATTR_RPC_STATUS_DPORT,
-	NFSD_ATTR_RPC_STATUS_COMPOND_OP,
+	NFSD_ATTR_RPC_STATUS_COMPOUND_OP,
 
 	__NFSD_ATTR_RPC_STATUS_MAX,
 	NFSD_ATTR_RPC_STATUS_MAX = (__NFSD_ATTR_RPC_STATUS_MAX - 1)
 };
 
 enum nfsd_commands {
-	NFSD_CMD_UNSPEC,
-	NFSD_CMD_RPC_STATUS_GET,
+	NFSD_CMD_RPC_STATUS_GET = 1,
 
 	__NFSD_CMD_MAX,
 	NFSD_CMD_MAX = (__NFSD_CMD_MAX - 1)
@@ -130,4 +127,4 @@ enum nfs_opnum4 {
 	OP_ILLEGAL = 10044,
 };
 
-#endif /* _UAPI_LINUX_NFSD_SERVER_H */
+#endif /* _UAPI_LINUX_NFSD_H */

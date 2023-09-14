@@ -15,7 +15,7 @@
 #include <netlink/attr.h>
 #include <linux/netlink.h>
 
-#include "nfsd_server.h"
+#include "nfsd.h"
 
 /* compile note:
  * gcc -I/usr/include/libnl3/ -o <prog-name> <prog-name>.c -lnl-3 -lnl-genl-3
@@ -164,22 +164,21 @@ static int recv_handler(struct nl_msg *msg, void *arg)
 	if (tb[NFSD_ATTR_RPC_STATUS_DPORT])
 		printf(" %hu", nla_get_u16(tb[NFSD_ATTR_RPC_STATUS_DPORT]));
 
-	if (tb[NFSD_ATTR_RPC_STATUS_COMPOND_OP]) {
-		struct nlattr *op_attr[NFSD_ATTR_RPC_STATUS_COMP_MAX + 1];
+	if (tb[NFSD_ATTR_RPC_STATUS_COMPOUND_OP]) {
+		struct nlattr *op_attr[NFSD_ATTR_COMPOUND_MAX + 1];
 		struct nlattr *attr;
 		int m;
 
 		nla_for_each_nested(attr,
-				    tb[NFSD_ATTR_RPC_STATUS_COMPOND_OP], m) {
+				    tb[NFSD_ATTR_RPC_STATUS_COMPOUND_OP], m) {
 			unsigned int op;
 
-			nla_parse_nested(op_attr,
-					 NFSD_ATTR_RPC_STATUS_COMP_MAX, attr,
-					 NULL);
-			if (!op_attr[NFSD_ATTR_RPC_STATUS_COMP_OP])
+			nla_parse_nested(op_attr, NFSD_ATTR_COMPOUND_MAX,
+					 attr, NULL);
+			if (!op_attr[NFSD_ATTR_COMPOUND_OP])
 				continue;
 
-			op = nla_get_u32(op_attr[NFSD_ATTR_RPC_STATUS_COMP_OP]);
+			op = nla_get_u32(op_attr[NFSD_ATTR_COMPOUND_OP]);
 			if (op < NFSD4_OPS_MAX_LEN)
 				printf(" %s", nfsd4_ops[op]);
 		}
@@ -211,9 +210,9 @@ int main(char argc, char **argv)
 	setsockopt(nl_socket_get_fd(sock), SOL_NETLINK, NETLINK_EXT_ACK,
 		   &ret, sizeof(ret));
 
-	id = genl_ctrl_resolve(sock, NFSD_SERVER_FAMILY_NAME);
+	id = genl_ctrl_resolve(sock, NFSD_FAMILY_NAME);
 	if (id < 0) {
-		fprintf(stderr, "%s not found\n", NFSD_SERVER_FAMILY_NAME);
+		fprintf(stderr, "%s not found\n", NFSD_FAMILY_NAME);
 		ret = -ENOENT;
 		goto out;
 	}
