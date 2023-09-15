@@ -118,72 +118,52 @@ static int ack_handler(struct nl_msg *msg, void *arg)
 static int recv_handler(struct nl_msg *msg, void *arg)
 {
 	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
-	struct nlattr *tb[NFSD_ATTR_RPC_STATUS_MAX + 1];
+	struct nlattr *attr;
+	int rem;
 
-	nla_parse(tb, NFSD_ATTR_RPC_STATUS_MAX, genlmsg_attrdata(gnlh, 0),
-		  genlmsg_attrlen(gnlh, 0), NULL);
+	nla_for_each_attr(attr, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), rem) {
+		switch (nla_type(attr)) {
+		case NFSD_A_RPC_STATUS_XID:
+			/* this is always the first element */
+			printf("\n");
+		case NFSD_A_RPC_STATUS_FLAGS:
+			printf(" 0x%08x", nla_get_u32(attr));
+			break;
+		case NFSD_A_RPC_STATUS_PROC:
+		case NFSD_A_RPC_STATUS_PROG:
+			printf(" %d", nla_get_u32(attr));
+			break;
+		case NFSD_A_RPC_STATUS_VERSION:
+			printf(" NFS%d", nla_get_u8(attr));
+			break;
+		case NFSD_A_RPC_STATUS_SERVICE_TIME:
+			printf(" %ld", nla_get_u64(attr));
+			break;
+		case NFSD_A_RPC_STATUS_DADDR4:
+		case NFSD_A_RPC_STATUS_SADDR4: {
+			struct in_addr addr = {
+				.s_addr = nla_get_u32(attr),
+			};
 
-	if (tb[NFSD_ATTR_RPC_STATUS_XID])
-		printf(" 0x%08x", nla_get_u32(tb[NFSD_ATTR_RPC_STATUS_XID]));
+			printf(" %s", inet_ntoa(addr));
+			break;
+		}
+		case NFSD_A_RPC_STATUS_DPORT:
+		case NFSD_A_RPC_STATUS_SPORT:
+			printf(" %hu", nla_get_u16(attr));
+			break;
+		case NFSD_A_RPC_STATUS_COMPOUND_OPS: {
+			unsigned int op = nla_get_u32(attr);
 
-	if (tb[NFSD_ATTR_RPC_STATUS_FLAGS])
-		printf(" 0x%08x", nla_get_u32(tb[NFSD_ATTR_RPC_STATUS_FLAGS]));
-
-	if (tb[NFSD_ATTR_RPC_STATUS_PROG])
-		printf(" %d", nla_get_u32(tb[NFSD_ATTR_RPC_STATUS_PROG]));
-
-	if (tb[NFSD_ATTR_RPC_STATUS_VERSION])
-		printf(" NFS%d", nla_get_u8(tb[NFSD_ATTR_RPC_STATUS_VERSION]));
-
-	if (tb[NFSD_ATTR_RPC_STATUS_PROC])
-		printf(" %d", nla_get_u32(tb[NFSD_ATTR_RPC_STATUS_PROC]));
-
-	if (tb[NFSD_ATTR_RPC_STATUS_SERVICE_TIME])
-		printf(" %ld",
-		       nla_get_u64(tb[NFSD_ATTR_RPC_STATUS_SERVICE_TIME]));
-
-	if (tb[NFSD_ATTR_RPC_STATUS_SADDR4]) {
-		struct in_addr addr = {
-			.s_addr = nla_get_u32(tb[NFSD_ATTR_RPC_STATUS_SADDR4])
-		};
-
-		printf(" %s", inet_ntoa(addr));
-	}
-
-	if (tb[NFSD_ATTR_RPC_STATUS_SPORT])
-		printf(" %hu", nla_get_u16(tb[NFSD_ATTR_RPC_STATUS_SPORT]));
-
-	if (tb[NFSD_ATTR_RPC_STATUS_DADDR4]) {
-		struct in_addr addr = {
-			.s_addr = nla_get_u32(tb[NFSD_ATTR_RPC_STATUS_DADDR4])
-		};
-
-		printf(" %s", inet_ntoa(addr));
-	}
-
-	if (tb[NFSD_ATTR_RPC_STATUS_DPORT])
-		printf(" %hu", nla_get_u16(tb[NFSD_ATTR_RPC_STATUS_DPORT]));
-
-	if (tb[NFSD_ATTR_RPC_STATUS_COMPOUND_OP]) {
-		struct nlattr *op_attr[NFSD_ATTR_COMPOUND_MAX + 1];
-		struct nlattr *attr;
-		int m;
-
-		nla_for_each_nested(attr,
-				    tb[NFSD_ATTR_RPC_STATUS_COMPOUND_OP], m) {
-			unsigned int op;
-
-			nla_parse_nested(op_attr, NFSD_ATTR_COMPOUND_MAX,
-					 attr, NULL);
-			if (!op_attr[NFSD_ATTR_COMPOUND_OP])
-				continue;
-
-			op = nla_get_u32(op_attr[NFSD_ATTR_COMPOUND_OP]);
 			if (op < NFSD4_OPS_MAX_LEN)
 				printf(" %s", nfsd4_ops[op]);
+			break;
+		}
+		default:
+			break;
 		}
 	}
-	printf("\n");
 
 	return NL_SKIP;
 }
