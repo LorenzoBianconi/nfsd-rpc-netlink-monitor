@@ -125,8 +125,6 @@ static void parse_rpc_status_get(struct genlmsghdr *gnlh)
 			  genlmsg_attrlen(gnlh, 0), rem) {
 		switch (nla_type(attr)) {
 		case NFSD_A_RPC_STATUS_XID:
-			/* this is always the first element */
-			printf("\n");
 		case NFSD_A_RPC_STATUS_FLAGS:
 			printf(" 0x%08x", nla_get_u32(attr));
 			break;
@@ -164,6 +162,7 @@ static void parse_rpc_status_get(struct genlmsghdr *gnlh)
 			break;
 		}
 	}
+	printf("\n");
 }
 
 static void parse_server_status_get(struct genlmsghdr *gnlh)
@@ -174,10 +173,10 @@ static void parse_server_status_get(struct genlmsghdr *gnlh)
 		  genlmsg_attrlen(gnlh, 0), NULL);
 
 	if (tb[NFSD_A_SERVER_ATTR_THREADS])
-		printf("running threads: %d\n",
+		printf("running threads\t\t: %d\n",
 		       nla_get_u16(tb[NFSD_A_SERVER_ATTR_THREADS]));
 	if (tb[NFSD_A_SERVER_ATTR_V4_GRACE])
-		printf("nfs4 grace period: %d\n",
+		printf("nfs4 grace period\t: %d\n",
 		       nla_get_u8(tb[NFSD_A_SERVER_ATTR_V4_GRACE]));
 }
 
@@ -203,6 +202,8 @@ static const struct option long_options[] = {
 	{ "help", no_argument, NULL, 'h' },
 	{ "rpc-status", no_argument, NULL, 'R' },
 	{ "server-status", no_argument, NULL, 'R' },
+	{ "set-threads", required_argument, NULL, 't' },
+	{ "release-grace-v4", required_argument, NULL, 'g' },
 	{},
 };
 
@@ -226,12 +227,17 @@ static void usage(char *argv[], const struct option *long_options)
 #define BUFFER_SIZE	8192
 int main(char argc, char **argv)
 {
-	int nl_flags = 0, nl_cmd, longindex = 0, opt, ret = 1, id;
+	int val, nl_flags = 0, nl_cmd, longindex = 0, opt, ret = 1, id;
 	struct nl_sock *sock;
 	struct nl_msg *msg;
 	struct nl_cb *cb;
 
-	while ((opt = getopt_long(argc, argv, "RS", long_options,
+	if (argc == 1) {
+		usage(argv, long_options);
+		return -EINVAL;
+	}
+
+	while ((opt = getopt_long(argc, argv, "hRSt:g:", long_options,
 				  &longindex)) != -1) {
 		switch (opt) {
 		case 'S':
@@ -242,10 +248,18 @@ int main(char argc, char **argv)
 			nl_cmd = NFSD_CMD_RPC_STATUS_GET;
 			nl_flags = NLM_F_DUMP;
 			break;
+		case 't':
+			val = strtoul(optarg, NULL, 0);
+			nl_cmd = NFSD_CMD_THREADS_SET;
+			break;
+		case 'g':
+			val = strtoul(optarg, NULL, 0);
+			nl_cmd = NFSD_CMD_V4_GRACE_RELEASE;
+			break;
 		case 'h':
 		default:
 			usage(argv, long_options);
-			break;
+			return 0;
 		}
 	}
 
@@ -285,6 +299,17 @@ int main(char argc, char **argv)
 	}
 
 	genlmsg_put(msg, 0, 0, id, 0, nl_flags, nl_cmd, 0);
+
+	switch (nl_cmd) {
+	case NFSD_CMD_THREADS_SET:
+		nla_put_u16(msg, NFSD_A_SERVER_ATTR_THREADS, val);
+		break;
+	case NFSD_CMD_V4_GRACE_RELEASE:
+		nla_put_u8(msg, NFSD_A_SERVER_ATTR_V4_GRACE, val);
+		break;
+	default:
+		break;
+	}
 
 	ret = nl_send_auto_complete(sock, msg);
 	if (ret < 0)
