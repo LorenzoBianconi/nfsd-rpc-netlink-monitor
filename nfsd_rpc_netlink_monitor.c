@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <getopt.h>
 
 #include <netlink/genl/family.h>
 #include <netlink/genl/ctrl.h>
@@ -15,7 +16,7 @@
 #include <netlink/attr.h>
 #include <linux/netlink.h>
 
-#include "nfsd.h"
+#include "nfsd_netlink.h"
 
 /* compile note:
  * gcc -I/usr/include/libnl3/ -o <prog-name> <prog-name>.c -lnl-3 -lnl-genl-3
@@ -115,9 +116,8 @@ static int ack_handler(struct nl_msg *msg, void *arg)
 	return NL_STOP;
 }
 
-static int recv_handler(struct nl_msg *msg, void *arg)
+static void parse_rpc_status_get(struct genlmsghdr *gnlh)
 {
-	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
 	struct nlattr *attr;
 	int rem;
 
@@ -164,17 +164,90 @@ static int recv_handler(struct nl_msg *msg, void *arg)
 			break;
 		}
 	}
+}
+
+static void parse_server_status_get(struct genlmsghdr *gnlh)
+{
+	struct nlattr *tb[NFSD_A_SERVER_ATTR_MAX + 1];
+
+	nla_parse(tb, NFSD_A_SERVER_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+		  genlmsg_attrlen(gnlh, 0), NULL);
+
+	if (tb[NFSD_A_SERVER_ATTR_THREADS])
+		printf("running threads: %d\n",
+		       nla_get_u16(tb[NFSD_A_SERVER_ATTR_THREADS]));
+	if (tb[NFSD_A_SERVER_ATTR_V4_GRACE])
+		printf("nfs4 grace period: %d\n",
+		       nla_get_u8(tb[NFSD_A_SERVER_ATTR_V4_GRACE]));
+}
+
+static int recv_handler(struct nl_msg *msg, void *arg)
+{
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+
+	switch (gnlh->cmd) {
+	case NFSD_CMD_RPC_STATUS_GET:
+		parse_rpc_status_get(gnlh);
+		break;
+	case NFSD_CMD_SERVER_STATUS_GET:
+		parse_server_status_get(gnlh);
+		break;
+	default:
+		break;
+	}
 
 	return NL_SKIP;
+}
+
+static const struct option long_options[] = {
+	{ "help", no_argument, NULL, 'h' },
+	{ "rpc-status", no_argument, NULL, 'R' },
+	{ "server-status", no_argument, NULL, 'R' },
+	{},
+};
+
+static void usage(char *argv[], const struct option *long_options)
+{
+	int i;
+
+	printf("\nOption for %s:\n", argv[0]);
+	for (i = 0; long_options[i].name != 0; i++) {
+		printf(" --%-15s", long_options[i].name);
+		if (long_options[i].flag != NULL)
+			printf(" flag (internal value: %d)",
+			       *long_options[i].flag);
+		else
+			printf("\t short-option: -%c", long_options[i].val);
+		printf("\n");
+	}
+	printf("\n");
 }
 
 #define BUFFER_SIZE	8192
 int main(char argc, char **argv)
 {
+	int nl_flags = 0, nl_cmd, longindex = 0, opt, ret = 1, id;
 	struct nl_sock *sock;
 	struct nl_msg *msg;
 	struct nl_cb *cb;
-	int ret = 1, id;
+
+	while ((opt = getopt_long(argc, argv, "RS", long_options,
+				  &longindex)) != -1) {
+		switch (opt) {
+		case 'S':
+			nl_cmd = NFSD_CMD_SERVER_STATUS_GET;
+			nl_flags = NLM_F_DUMP;
+			break;
+		case 'R':
+			nl_cmd = NFSD_CMD_RPC_STATUS_GET;
+			nl_flags = NLM_F_DUMP;
+			break;
+		case 'h':
+		default:
+			usage(argv, long_options);
+			break;
+		}
+	}
 
 	sock = nl_socket_alloc();
 	if (!sock)
@@ -211,7 +284,7 @@ int main(char argc, char **argv)
 		goto out;
 	}
 
-	genlmsg_put(msg, 0, 0, id, 0, NLM_F_DUMP, NFSD_CMD_RPC_STATUS_GET, 0);
+	genlmsg_put(msg, 0, 0, id, 0, nl_flags, nl_cmd, 0);
 
 	ret = nl_send_auto_complete(sock, msg);
 	if (ret < 0)
