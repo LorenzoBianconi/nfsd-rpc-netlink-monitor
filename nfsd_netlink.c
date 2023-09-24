@@ -173,11 +173,14 @@ static void parse_server_status_get(struct genlmsghdr *gnlh)
 		  genlmsg_attrlen(gnlh, 0), NULL);
 
 	if (tb[NFSD_A_SERVER_ATTR_THREADS])
-		printf("running threads\t\t: %d\n",
-		       nla_get_u16(tb[NFSD_A_SERVER_ATTR_THREADS]));
-	if (tb[NFSD_A_SERVER_ATTR_V4_GRACE])
-		printf("nfs4 grace period\t: %d\n",
-		       nla_get_u8(tb[NFSD_A_SERVER_ATTR_V4_GRACE]));
+		printf("running threads\t: %d\n",
+		       nla_get_u32(tb[NFSD_A_SERVER_ATTR_THREADS]));
+	if (tb[NFSD_A_SERVER_ATTR_MAX_BLKSIZE])
+		printf("max block size\t: %d\n",
+		       nla_get_u32(tb[NFSD_A_SERVER_ATTR_MAX_BLKSIZE]));
+	if (tb[NFSD_A_SERVER_ATTR_MAX_CONN])
+		printf("max connections\t: %d\n",
+		       nla_get_u32(tb[NFSD_A_SERVER_ATTR_MAX_CONN]));
 }
 
 static int recv_handler(struct nl_msg *msg, void *arg)
@@ -188,7 +191,9 @@ static int recv_handler(struct nl_msg *msg, void *arg)
 	case NFSD_CMD_RPC_STATUS_GET:
 		parse_rpc_status_get(gnlh);
 		break;
-	case NFSD_CMD_SERVER_STATUS_GET:
+	case NFSD_CMD_MAX_BLKSIZE_GET:
+	case NFSD_CMD_MAX_CONN_GET:
+	case NFSD_CMD_THREADS_GET:
 		parse_server_status_get(gnlh);
 		break;
 	default:
@@ -201,9 +206,12 @@ static int recv_handler(struct nl_msg *msg, void *arg)
 static const struct option long_options[] = {
 	{ "help", no_argument, NULL, 'h' },
 	{ "rpc-status", no_argument, NULL, 'R' },
-	{ "server-status", no_argument, NULL, 'R' },
 	{ "set-threads", required_argument, NULL, 't' },
-	{ "release-grace-v4", required_argument, NULL, 'g' },
+	{ "get-threads", no_argument, NULL, 'T' },
+	{ "set-max-blksize", required_argument, NULL, 'b' },
+	{ "get-max-blksize", no_argument, NULL, 'B' },
+	{ "set-max-conn", required_argument, NULL, 'c' },
+	{ "get-max-conn", no_argument, NULL, 'C' },
 	{},
 };
 
@@ -227,7 +235,7 @@ static void usage(char *argv[], const struct option *long_options)
 #define BUFFER_SIZE	8192
 int main(char argc, char **argv)
 {
-	int val, nl_flags = 0, nl_cmd, longindex = 0, opt, ret = 1, id;
+	int val, attr, nl_flags = 0, nl_cmd, longindex = 0, opt, ret = 1, id;
 	struct nl_sock *sock;
 	struct nl_msg *msg;
 	struct nl_cb *cb;
@@ -237,11 +245,19 @@ int main(char argc, char **argv)
 		return -EINVAL;
 	}
 
-	while ((opt = getopt_long(argc, argv, "hRSt:g:", long_options,
+	while ((opt = getopt_long(argc, argv, "hRt:Tb:Bc:C", long_options,
 				  &longindex)) != -1) {
 		switch (opt) {
-		case 'S':
-			nl_cmd = NFSD_CMD_SERVER_STATUS_GET;
+		case 'T':
+			nl_cmd = NFSD_CMD_THREADS_GET;
+			nl_flags = NLM_F_DUMP;
+			break;
+		case 'B':
+			nl_cmd = NFSD_CMD_MAX_BLKSIZE_GET;
+			nl_flags = NLM_F_DUMP;
+			break;
+		case 'C':
+			nl_cmd = NFSD_CMD_MAX_CONN_GET;
 			nl_flags = NLM_F_DUMP;
 			break;
 		case 'R':
@@ -250,11 +266,18 @@ int main(char argc, char **argv)
 			break;
 		case 't':
 			val = strtoul(optarg, NULL, 0);
+			attr = NFSD_A_SERVER_ATTR_THREADS;
 			nl_cmd = NFSD_CMD_THREADS_SET;
 			break;
-		case 'g':
+		case 'b':
 			val = strtoul(optarg, NULL, 0);
-			nl_cmd = NFSD_CMD_V4_GRACE_RELEASE;
+			attr = NFSD_A_SERVER_ATTR_MAX_BLKSIZE;
+			nl_cmd = NFSD_CMD_MAX_BLKSIZE_SET;
+			break;
+		case 'c':
+			val = strtoul(optarg, NULL, 0);
+			attr = NFSD_A_SERVER_ATTR_MAX_CONN;
+			nl_cmd = NFSD_CMD_MAX_CONN_SET;
 			break;
 		case 'h':
 		default:
@@ -301,11 +324,10 @@ int main(char argc, char **argv)
 	genlmsg_put(msg, 0, 0, id, 0, nl_flags, nl_cmd, 0);
 
 	switch (nl_cmd) {
+	case NFSD_CMD_MAX_BLKSIZE_SET:
+	case NFSD_CMD_MAX_CONN_SET:
 	case NFSD_CMD_THREADS_SET:
-		nla_put_u16(msg, NFSD_A_SERVER_ATTR_THREADS, val);
-		break;
-	case NFSD_CMD_V4_GRACE_RELEASE:
-		nla_put_u8(msg, NFSD_A_SERVER_ATTR_V4_GRACE, val);
+		nla_put_u32(msg, attr, val);
 		break;
 	default:
 		break;
