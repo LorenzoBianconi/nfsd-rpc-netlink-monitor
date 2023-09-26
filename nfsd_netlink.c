@@ -167,20 +167,20 @@ static void parse_rpc_status_get(struct genlmsghdr *gnlh)
 
 static void parse_server_status_get(struct genlmsghdr *gnlh)
 {
-	struct nlattr *tb[NFSD_A_SERVER_ATTR_MAX + 1];
+	struct nlattr *tb[NFSD_A_CONTROL_PLANE_MAX + 1];
 
-	nla_parse(tb, NFSD_A_SERVER_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+	nla_parse(tb, NFSD_A_CONTROL_PLANE_MAX, genlmsg_attrdata(gnlh, 0),
 		  genlmsg_attrlen(gnlh, 0), NULL);
 
-	if (tb[NFSD_A_SERVER_ATTR_THREADS])
+	if (tb[NFSD_A_CONTROL_PLANE_THREADS])
 		printf("running threads\t: %d\n",
-		       nla_get_u32(tb[NFSD_A_SERVER_ATTR_THREADS]));
-	if (tb[NFSD_A_SERVER_ATTR_MAX_BLKSIZE])
+		       nla_get_u32(tb[NFSD_A_CONTROL_PLANE_THREADS]));
+	if (tb[NFSD_A_CONTROL_PLANE_MAX_BLKSIZE])
 		printf("max block size\t: %d\n",
-		       nla_get_u32(tb[NFSD_A_SERVER_ATTR_MAX_BLKSIZE]));
-	if (tb[NFSD_A_SERVER_ATTR_MAX_CONN])
+		       nla_get_u32(tb[NFSD_A_CONTROL_PLANE_MAX_BLKSIZE]));
+	if (tb[NFSD_A_CONTROL_PLANE_MAX_CONN])
 		printf("max connections\t: %d\n",
-		       nla_get_u32(tb[NFSD_A_SERVER_ATTR_MAX_CONN]));
+		       nla_get_u32(tb[NFSD_A_CONTROL_PLANE_MAX_CONN]));
 }
 
 static int recv_handler(struct nl_msg *msg, void *arg)
@@ -266,17 +266,17 @@ int main(char argc, char **argv)
 			break;
 		case 't':
 			val = strtoul(optarg, NULL, 0);
-			attr = NFSD_A_SERVER_ATTR_THREADS;
+			attr = NFSD_A_CONTROL_PLANE_THREADS;
 			nl_cmd = NFSD_CMD_THREADS_SET;
 			break;
 		case 'b':
 			val = strtoul(optarg, NULL, 0);
-			attr = NFSD_A_SERVER_ATTR_MAX_BLKSIZE;
+			attr = NFSD_A_CONTROL_PLANE_MAX_BLKSIZE;
 			nl_cmd = NFSD_CMD_MAX_BLKSIZE_SET;
 			break;
 		case 'c':
 			val = strtoul(optarg, NULL, 0);
-			attr = NFSD_A_SERVER_ATTR_MAX_CONN;
+			attr = NFSD_A_CONTROL_PLANE_MAX_CONN;
 			nl_cmd = NFSD_CMD_MAX_CONN_SET;
 			break;
 		case 'h':
