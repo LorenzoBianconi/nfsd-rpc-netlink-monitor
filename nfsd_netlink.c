@@ -165,36 +165,64 @@ static void parse_rpc_status_get(struct genlmsghdr *gnlh)
 	printf("\n");
 }
 
-static void parse_server_status_get(struct genlmsghdr *gnlh)
+static void parse_version_get(struct genlmsghdr *gnlh)
 {
-	struct nlattr *tb[NFSD_A_CONTROL_PLANE_MAX + 1];
+	struct nlattr *attr;
+	int rem;
 
-	nla_parse(tb, NFSD_A_CONTROL_PLANE_MAX, genlmsg_attrdata(gnlh, 0),
-		  genlmsg_attrlen(gnlh, 0), NULL);
+	nla_for_each_attr(attr, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), rem) {
+		switch (nla_type(attr)) {
+		case NFSD_A_SERVER_VERSION_MAJOR:
+		case NFSD_A_SERVER_VERSION_MINOR:
+			printf(" %d", nla_get_u32(attr));
+			break;
+		default:
+			break;
+		}
+	}
+	printf("\n");
+}
 
-	if (tb[NFSD_A_CONTROL_PLANE_THREADS])
-		printf("running threads\t: %d\n",
-		       nla_get_u32(tb[NFSD_A_CONTROL_PLANE_THREADS]));
-	if (tb[NFSD_A_CONTROL_PLANE_MAX_BLKSIZE])
-		printf("max block size\t: %d\n",
-		       nla_get_u32(tb[NFSD_A_CONTROL_PLANE_MAX_BLKSIZE]));
-	if (tb[NFSD_A_CONTROL_PLANE_MAX_CONN])
-		printf("max connections\t: %d\n",
-		       nla_get_u32(tb[NFSD_A_CONTROL_PLANE_MAX_CONN]));
+static void parse_listener_get(struct genlmsghdr *gnlh)
+{
+	int rem, major, minor;
+	struct nlattr *attr;
+
+	nla_for_each_attr(attr, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), rem) {
+		switch (nla_type(attr)) {
+		case NFSD_A_SERVER_LISTENER_TRANSPORT_NAME:
+			printf(" %s", nla_data(attr));
+			break;
+		case NFSD_A_SERVER_LISTENER_PORT:
+			printf(" %d", nla_get_u32(attr));
+			break;
+		default:
+			break;
+		}
+	}
+	printf("\n");
 }
 
 static int recv_handler(struct nl_msg *msg, void *arg)
 {
 	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	const struct nlattr *attr = genlmsg_attrdata(gnlh, 0);
 
 	switch (gnlh->cmd) {
 	case NFSD_CMD_RPC_STATUS_GET:
 		parse_rpc_status_get(gnlh);
 		break;
-	case NFSD_CMD_MAX_BLKSIZE_GET:
-	case NFSD_CMD_MAX_CONN_GET:
 	case NFSD_CMD_THREADS_GET:
-		parse_server_status_get(gnlh);
+		if (nla_type(attr) == NFSD_A_SERVER_WORKER_THREADS)
+			printf("running threads\t: %d\n", nla_get_u32(attr));
+		break;
+	case NFSD_CMD_VERSION_GET:
+		parse_version_get(gnlh);
+		break;
+	case NFSD_CMD_LISTENER_GET:
+		parse_listener_get(gnlh);
 		break;
 	default:
 		break;
@@ -204,15 +232,15 @@ static int recv_handler(struct nl_msg *msg, void *arg)
 }
 
 static const struct option long_options[] = {
-	{ "help", no_argument, NULL, 'h' },
-	{ "rpc-status", no_argument, NULL, 'R' },
-	{ "set-threads", required_argument, NULL, 't' },
-	{ "get-threads", no_argument, NULL, 'T' },
-	{ "set-max-blksize", required_argument, NULL, 'b' },
-	{ "get-max-blksize", no_argument, NULL, 'B' },
-	{ "set-max-conn", required_argument, NULL, 'c' },
-	{ "get-max-conn", no_argument, NULL, 'C' },
-	{},
+	{ "help", no_argument, NULL, 'h'		},
+	{ "rpc-status", no_argument, NULL, 'R'		},
+	{ "set-threads", required_argument, NULL, 't'	},
+	{ "get-threads", no_argument, NULL, 'T'		},
+	{ "set-version", required_argument, NULL, 'v'	},
+	{ "get-versions", no_argument, NULL, 'V'	},
+	{ "set-listener", required_argument, NULL, 'l'	},
+	{ "get-listeners", no_argument, NULL, 'L'	},
+	{ },
 };
 
 static void usage(char *argv[], const struct option *long_options)
@@ -235,9 +263,11 @@ static void usage(char *argv[], const struct option *long_options)
 #define BUFFER_SIZE	8192
 int main(char argc, char **argv)
 {
-	int val, attr, nl_flags = 0, nl_cmd, longindex = 0, opt, ret = 1, id;
+	int thread, nl_flags = 0, nl_cmd, longindex = 0, opt, ret = 1, id;
+	int major, minor, status, port;
 	struct nl_sock *sock;
 	struct nl_msg *msg;
+	char transport[64];
 	struct nl_cb *cb;
 
 	if (argc == 1) {
@@ -245,39 +275,42 @@ int main(char argc, char **argv)
 		return -EINVAL;
 	}
 
-	while ((opt = getopt_long(argc, argv, "hRt:Tb:Bc:C", long_options,
-				  &longindex)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hRt:Tb:Bc:Cv:Vl:L",
+				  long_options, &longindex)) != -1) {
 		switch (opt) {
 		case 'T':
 			nl_cmd = NFSD_CMD_THREADS_GET;
-			nl_flags = NLM_F_DUMP;
-			break;
-		case 'B':
-			nl_cmd = NFSD_CMD_MAX_BLKSIZE_GET;
-			nl_flags = NLM_F_DUMP;
-			break;
-		case 'C':
-			nl_cmd = NFSD_CMD_MAX_CONN_GET;
-			nl_flags = NLM_F_DUMP;
 			break;
 		case 'R':
 			nl_cmd = NFSD_CMD_RPC_STATUS_GET;
 			nl_flags = NLM_F_DUMP;
 			break;
 		case 't':
-			val = strtoul(optarg, NULL, 0);
-			attr = NFSD_A_CONTROL_PLANE_THREADS;
+			thread = strtoul(optarg, NULL, 0);
 			nl_cmd = NFSD_CMD_THREADS_SET;
 			break;
-		case 'b':
-			val = strtoul(optarg, NULL, 0);
-			attr = NFSD_A_CONTROL_PLANE_MAX_BLKSIZE;
-			nl_cmd = NFSD_CMD_MAX_BLKSIZE_SET;
+		case 'v':
+			if (sscanf(optarg, "%d %d %d",
+				  &major, &minor, &status) != 3) {
+				usage(argv, long_options);
+				return 0;
+			}
+			nl_cmd = NFSD_CMD_VERSION_SET;
 			break;
-		case 'c':
-			val = strtoul(optarg, NULL, 0);
-			attr = NFSD_A_CONTROL_PLANE_MAX_CONN;
-			nl_cmd = NFSD_CMD_MAX_CONN_SET;
+		case 'V':
+			nl_cmd = NFSD_CMD_VERSION_GET;
+			nl_flags = NLM_F_DUMP;
+			break;
+		case 'l':
+			if (sscanf(optarg, "%s %d", transport, &port) != 2) {
+				usage(argv, long_options);
+				return 0;
+			}
+			nl_cmd = NFSD_CMD_LISTENER_START;
+			break;
+		case 'L':
+			nl_cmd = NFSD_CMD_LISTENER_GET;
+			nl_flags = NLM_F_DUMP;
 			break;
 		case 'h':
 		default:
@@ -324,10 +357,18 @@ int main(char argc, char **argv)
 	genlmsg_put(msg, 0, 0, id, 0, nl_flags, nl_cmd, 0);
 
 	switch (nl_cmd) {
-	case NFSD_CMD_MAX_BLKSIZE_SET:
-	case NFSD_CMD_MAX_CONN_SET:
 	case NFSD_CMD_THREADS_SET:
-		nla_put_u32(msg, attr, val);
+		nla_put_u32(msg, NFSD_A_SERVER_WORKER_THREADS, thread);
+		break;
+	case NFSD_CMD_VERSION_SET:
+		nla_put_u32(msg, NFSD_A_SERVER_VERSION_MAJOR, major);
+		nla_put_u32(msg, NFSD_A_SERVER_VERSION_MINOR, minor);
+		nla_put_u8(msg, NFSD_A_SERVER_VERSION_STATUS, status);
+		break;
+	case NFSD_CMD_LISTENER_START:
+		nla_put_string(msg, NFSD_A_SERVER_LISTENER_TRANSPORT_NAME,
+			       transport);
+		nla_put_u32(msg, NFSD_A_SERVER_LISTENER_PORT, port);
 		break;
 	default:
 		break;
