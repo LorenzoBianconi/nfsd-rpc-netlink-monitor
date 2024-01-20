@@ -170,15 +170,23 @@ static void parse_version_get(struct genlmsghdr *gnlh)
 	struct nlattr *attr;
 	int rem;
 
+	printf("Server Versions:");
 	nla_for_each_attr(attr, genlmsg_attrdata(gnlh, 0),
 			  genlmsg_attrlen(gnlh, 0), rem) {
-		switch (nla_type(attr)) {
-		case NFSD_A_SERVER_VERSION_MAJOR:
-		case NFSD_A_SERVER_VERSION_MINOR:
-			printf(" %d", nla_get_u32(attr));
-			break;
-		default:
-			break;
+		struct nlattr *a;
+		int i;
+
+		nla_for_each_nested(a, attr, i) {
+			switch (nla_type(a)) {
+			case NFSD_A_NFS_VERSION_MAJOR:
+				printf("\t%d", nla_get_u32(a));
+				break;
+			case NFSD_A_NFS_VERSION_MINOR:
+				printf(":%d", nla_get_u32(a));
+				break;
+			default:
+				break;
+			}
 		}
 	}
 	printf("\n");
@@ -189,18 +197,34 @@ static void parse_listener_get(struct genlmsghdr *gnlh)
 	int rem, major, minor;
 	struct nlattr *attr;
 
+	printf("Server Listeners:");
 	nla_for_each_attr(attr, genlmsg_attrdata(gnlh, 0),
 			  genlmsg_attrlen(gnlh, 0), rem) {
-		switch (nla_type(attr)) {
-		case NFSD_A_SERVER_LISTENER_TRANSPORT_NAME:
-			printf(" %s", nla_data(attr));
-			break;
-		case NFSD_A_SERVER_LISTENER_PORT:
-			printf(" %d", nla_get_u32(attr));
-			break;
-		default:
-			break;
+		unsigned short proto = 0;
+		const char *name = NULL;
+		unsigned port = 0;
+		struct nlattr *a;
+		int i;
+
+		nla_for_each_nested(a, attr, i) {
+			switch (nla_type(a)) {
+			case NFSD_A_SERVER_INSTANCE_TRANSPORT_NAME:
+				name = nla_data(a);
+				break;
+			case NFSD_A_SERVER_INSTANCE_PORT:
+				port = nla_get_u32(a);
+				break;
+			case NFSD_A_SERVER_INSTANCE_INET_PROTO:
+				proto = nla_get_u16(a);
+				break;
+			default:
+				break;
+			}
 		}
+
+		if (name && port && proto)
+			printf("\n\t%s%s:%d",
+			       name, proto == AF_INET6 ? "6" : "4", port);
 	}
 	printf("\n");
 }
@@ -216,7 +240,7 @@ static int recv_handler(struct nl_msg *msg, void *arg)
 		break;
 	case NFSD_CMD_THREADS_GET:
 		if (nla_type(attr) == NFSD_A_SERVER_WORKER_THREADS)
-			printf("running threads\t: %d\n", nla_get_u32(attr));
+			printf("Running threads\t: %d\n", nla_get_u32(attr));
 		break;
 	case NFSD_CMD_VERSION_GET:
 		parse_version_get(gnlh);
@@ -238,8 +262,8 @@ static const struct option long_options[] = {
 	{ "get-threads", no_argument, NULL, 'T'		},
 	{ "set-version", required_argument, NULL, 'v'	},
 	{ "get-versions", no_argument, NULL, 'V'	},
-	{ "set-listener", required_argument, NULL, 'l'	},
-	{ "get-listeners", no_argument, NULL, 'L'	},
+	{ "set-listener", required_argument, NULL, 'p'	},
+	{ "get-listeners", no_argument, NULL, 'P'	},
 	{ },
 };
 
@@ -264,7 +288,7 @@ static void usage(char *argv[], const struct option *long_options)
 int main(char argc, char **argv)
 {
 	int thread, nl_flags = 0, nl_cmd, longindex = 0, opt, ret = 1, id;
-	int major, minor, status, port;
+	int major, minor, port, proto;
 	struct nl_sock *sock;
 	struct nl_msg *msg;
 	char transport[64];
@@ -275,12 +299,9 @@ int main(char argc, char **argv)
 		return -EINVAL;
 	}
 
-	while ((opt = getopt_long(argc, argv, "hRt:Tb:Bc:Cv:Vl:L",
+	while ((opt = getopt_long(argc, argv, "Rt:Tv:Vp:Ph",
 				  long_options, &longindex)) != -1) {
 		switch (opt) {
-		case 'T':
-			nl_cmd = NFSD_CMD_THREADS_GET;
-			break;
 		case 'R':
 			nl_cmd = NFSD_CMD_RPC_STATUS_GET;
 			nl_flags = NLM_F_DUMP;
@@ -289,9 +310,11 @@ int main(char argc, char **argv)
 			thread = strtoul(optarg, NULL, 0);
 			nl_cmd = NFSD_CMD_THREADS_SET;
 			break;
+		case 'T':
+			nl_cmd = NFSD_CMD_THREADS_GET;
+			break;
 		case 'v':
-			if (sscanf(optarg, "%d %d %d",
-				  &major, &minor, &status) != 3) {
+			if (sscanf(optarg, "%d %d", &major, &minor) != 2) {
 				usage(argv, long_options);
 				return 0;
 			}
@@ -299,18 +322,17 @@ int main(char argc, char **argv)
 			break;
 		case 'V':
 			nl_cmd = NFSD_CMD_VERSION_GET;
-			nl_flags = NLM_F_DUMP;
 			break;
-		case 'l':
-			if (sscanf(optarg, "%s %d", transport, &port) != 2) {
+		case 'p':
+			if (sscanf(optarg, "%s %d %d",
+				   transport, &port, &proto) != 3) {
 				usage(argv, long_options);
 				return 0;
 			}
-			nl_cmd = NFSD_CMD_LISTENER_START;
+			nl_cmd = NFSD_CMD_LISTENER_SET;
 			break;
-		case 'L':
+		case 'P':
 			nl_cmd = NFSD_CMD_LISTENER_GET;
-			nl_flags = NLM_F_DUMP;
 			break;
 		case 'h':
 		default:
@@ -360,16 +382,38 @@ int main(char argc, char **argv)
 	case NFSD_CMD_THREADS_SET:
 		nla_put_u32(msg, NFSD_A_SERVER_WORKER_THREADS, thread);
 		break;
-	case NFSD_CMD_VERSION_SET:
-		nla_put_u32(msg, NFSD_A_SERVER_VERSION_MAJOR, major);
-		nla_put_u32(msg, NFSD_A_SERVER_VERSION_MINOR, minor);
-		nla_put_u8(msg, NFSD_A_SERVER_VERSION_STATUS, status);
+	case NFSD_CMD_VERSION_SET: {
+		struct nlattr *a;
+
+		a = nla_nest_start(msg,
+				   NLA_F_NESTED | NFSD_A_SERVER_PROTO_VERSION);
+		if (!a) {
+			ret = -ENOMEM;
+			goto out;
+		}
+
+		nla_put_u32(msg, NFSD_A_NFS_VERSION_MAJOR, major);
+		nla_put_u32(msg, NFSD_A_NFS_VERSION_MINOR, minor);
+		nla_nest_end(msg, a);
 		break;
-	case NFSD_CMD_LISTENER_START:
-		nla_put_string(msg, NFSD_A_SERVER_LISTENER_TRANSPORT_NAME,
+	}
+	case NFSD_CMD_LISTENER_SET: {
+		struct nlattr *a;
+
+		a = nla_nest_start(msg,
+				   NLA_F_NESTED | NFSD_A_SERVER_LISTENER_INSTANCE);
+		if (!a) {
+			ret = -ENOMEM;
+			goto out;
+		}
+
+		nla_put_string(msg, NFSD_A_SERVER_INSTANCE_TRANSPORT_NAME,
 			       transport);
-		nla_put_u32(msg, NFSD_A_SERVER_LISTENER_PORT, port);
+		nla_put_u32(msg, NFSD_A_SERVER_INSTANCE_PORT, port);
+		nla_put_u16(msg, NFSD_A_SERVER_INSTANCE_INET_PROTO, proto);
+		nla_nest_end(msg, a);
 		break;
+	}
 	default:
 		break;
 	}
