@@ -178,10 +178,10 @@ static void parse_version_get(struct genlmsghdr *gnlh)
 
 		nla_for_each_nested(a, attr, i) {
 			switch (nla_type(a)) {
-			case NFSD_A_NFS_VERSION_MAJOR:
+			case NFSD_A_VERSION_MAJOR:
 				printf("\t%d", nla_get_u32(a));
 				break;
-			case NFSD_A_NFS_VERSION_MINOR:
+			case NFSD_A_VERSION_MINOR:
 				printf(":%d", nla_get_u32(a));
 				break;
 			default:
@@ -208,13 +208,13 @@ static void parse_listener_get(struct genlmsghdr *gnlh)
 
 		nla_for_each_nested(a, attr, i) {
 			switch (nla_type(a)) {
-			case NFSD_A_SERVER_INSTANCE_TRANSPORT_NAME:
+			case NFSD_A_LISTENER_TRANSPORT_NAME:
 				name = nla_data(a);
 				break;
-			case NFSD_A_SERVER_INSTANCE_PORT:
+			case NFSD_A_LISTENER_PORT:
 				port = nla_get_u32(a);
 				break;
-			case NFSD_A_SERVER_INSTANCE_INET_PROTO:
+			case NFSD_A_LISTENER_INET_PROTO:
 				proto = nla_get_u16(a);
 				break;
 			default:
@@ -262,6 +262,7 @@ static const struct option long_options[] = {
 	{ "get-threads", no_argument, NULL, 'T'		},
 	{ "set-version", required_argument, NULL, 'v'	},
 	{ "get-versions", no_argument, NULL, 'V'	},
+	{ "set-sockaddr", required_argument, NULL, 's'	},
 	{ "set-listener", required_argument, NULL, 'p'	},
 	{ "get-listeners", no_argument, NULL, 'P'	},
 	{ },
@@ -289,9 +290,9 @@ int main(char argc, char **argv)
 {
 	int thread, nl_flags = 0, nl_cmd, longindex = 0, opt, ret = 1, id;
 	int major, minor, port, proto;
+	char transport[64], addr[64];
 	struct nl_sock *sock;
 	struct nl_msg *msg;
-	char transport[64];
 	struct nl_cb *cb;
 
 	if (argc == 1) {
@@ -299,7 +300,7 @@ int main(char argc, char **argv)
 		return -EINVAL;
 	}
 
-	while ((opt = getopt_long(argc, argv, "Rt:Tv:Vp:Ph",
+	while ((opt = getopt_long(argc, argv, "Rt:Tv:Vp:Ps:h",
 				  long_options, &longindex)) != -1) {
 		switch (opt) {
 		case 'R':
@@ -330,6 +331,14 @@ int main(char argc, char **argv)
 				return 0;
 			}
 			nl_cmd = NFSD_CMD_LISTENER_SET;
+			break;
+		case 's':
+			if (sscanf(optarg, "%s %s %d %d",
+				   addr, transport, &port, &proto) != 4) {
+				usage(argv, long_options);
+				return 0;
+			}
+			nl_cmd = NFSD_CMD_SOCK_SET;
 			break;
 		case 'P':
 			nl_cmd = NFSD_CMD_LISTENER_GET;
@@ -391,9 +400,8 @@ int main(char argc, char **argv)
 			ret = -ENOMEM;
 			goto out;
 		}
-
-		nla_put_u32(msg, NFSD_A_NFS_VERSION_MAJOR, major);
-		nla_put_u32(msg, NFSD_A_NFS_VERSION_MINOR, minor);
+		nla_put_u32(msg, NFSD_A_VERSION_MAJOR, major);
+		nla_put_u32(msg, NFSD_A_VERSION_MINOR, minor);
 		nla_nest_end(msg, a);
 		break;
 	}
@@ -406,11 +414,54 @@ int main(char argc, char **argv)
 			ret = -ENOMEM;
 			goto out;
 		}
-
-		nla_put_string(msg, NFSD_A_SERVER_INSTANCE_TRANSPORT_NAME,
+		nla_put_string(msg, NFSD_A_LISTENER_TRANSPORT_NAME,
 			       transport);
-		nla_put_u32(msg, NFSD_A_SERVER_INSTANCE_PORT, port);
-		nla_put_u16(msg, NFSD_A_SERVER_INSTANCE_INET_PROTO, proto);
+		nla_put_u32(msg, NFSD_A_LISTENER_PORT, port);
+		nla_put_u16(msg, NFSD_A_LISTENER_INET_PROTO, proto);
+		nla_nest_end(msg, a);
+		break;
+	}
+	case NFSD_CMD_SOCK_SET: {
+		struct sockaddr_storage sa_storage = {};
+		struct nlattr *a;
+
+		switch (proto) {
+		case AF_INET: {
+			struct sockaddr_in *sin = (void *)&sa_storage;
+
+			sin->sin_family = AF_INET;
+			sin->sin_port = htons(port);
+			if (inet_pton(AF_INET, addr,  &sin->sin_addr) != 1) {
+				ret = -EINVAL;
+				goto out;
+			}
+			break;
+		}
+		case AF_INET6: {
+			struct sockaddr_in6 *sin6 = (void *)&sa_storage;
+
+			sin6->sin6_family = AF_INET6;
+			sin6->sin6_port = htons(port);
+			if (inet_pton(AF_INET6, addr, &sin6->sin6_addr) != 1) {
+				ret = -EINVAL;
+				goto out;
+			}
+			break;
+		}
+		default:
+			ret = -EINVAL;
+			goto out;
+		}
+
+		a = nla_nest_start(msg,
+				   NLA_F_NESTED | NFSD_A_SERVER_SOCK_ADDR);
+		if (!a) {
+			ret = -ENOMEM;
+			goto out;
+		}
+		nla_put(msg, NFSD_A_SOCK_ADDR, sizeof(sa_storage),
+			&sa_storage);
+		nla_put_string(msg, NFSD_A_SOCK_TRANSPORT_NAME, transport);
 		nla_nest_end(msg, a);
 		break;
 	}
