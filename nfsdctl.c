@@ -268,6 +268,31 @@ static const struct option long_options[] = {
 	{ },
 };
 
+static int get_cmd_type(int arg)
+{
+	switch (arg) {
+	case 'R':
+		return NFSD_CMD_RPC_STATUS_GET;
+	case 't':
+		return NFSD_CMD_THREADS_SET;
+	case 'T':
+		return NFSD_CMD_THREADS_GET;
+	case 'v':
+		return NFSD_CMD_VERSION_SET;
+	case 'V':
+		return NFSD_CMD_VERSION_GET;
+	case 'p':
+		return NFSD_CMD_LISTENER_SET;
+	case 'P':
+		return NFSD_CMD_LISTENER_GET;
+	case 's':
+		return NFSD_CMD_SOCK_SET;
+	case 'h':
+	default:
+		return -EINVAL;
+	}
+}
+
 static void usage(char *argv[], const struct option *long_options)
 {
 	int i;
@@ -288,7 +313,7 @@ static void usage(char *argv[], const struct option *long_options)
 #define BUFFER_SIZE	8192
 int main(char argc, char **argv)
 {
-	int thread, nl_flags = 0, nl_cmd, longindex = 0, opt, ret = 1, id;
+	int thread, nl_flags = 0, nl_cmd = 0, longindex = 0, opt, ret = 1, id;
 	int major, minor, port, proto;
 	char transport[64], addr[64];
 	struct nl_sock *sock;
@@ -302,51 +327,49 @@ int main(char argc, char **argv)
 
 	while ((opt = getopt_long(argc, argv, "Rt:Tv:Vp:Ps:h",
 				  long_options, &longindex)) != -1) {
-		switch (opt) {
-		case 'R':
-			nl_cmd = NFSD_CMD_RPC_STATUS_GET;
+		int cmd = get_cmd_type(opt);
+
+		if (cmd < 0) {
+			usage(argv, long_options);
+			return 0;
+		}
+
+		if (nl_cmd && cmd != nl_cmd) {
+			usage(argv, long_options);
+			return 0;
+		}
+
+		nl_cmd = cmd;
+
+		switch (nl_cmd) {
+		case NFSD_CMD_RPC_STATUS_GET:
 			nl_flags = NLM_F_DUMP;
 			break;
-		case 't':
+		case NFSD_CMD_THREADS_SET:
 			thread = strtoul(optarg, NULL, 0);
-			nl_cmd = NFSD_CMD_THREADS_SET;
 			break;
-		case 'T':
-			nl_cmd = NFSD_CMD_THREADS_GET;
-			break;
-		case 'v':
+		case NFSD_CMD_VERSION_SET:
 			if (sscanf(optarg, "%d %d", &major, &minor) != 2) {
 				usage(argv, long_options);
 				return 0;
 			}
-			nl_cmd = NFSD_CMD_VERSION_SET;
 			break;
-		case 'V':
-			nl_cmd = NFSD_CMD_VERSION_GET;
-			break;
-		case 'p':
+		case NFSD_CMD_LISTENER_SET:
 			if (sscanf(optarg, "%s %d %d",
 				   transport, &port, &proto) != 3) {
 				usage(argv, long_options);
 				return 0;
 			}
-			nl_cmd = NFSD_CMD_LISTENER_SET;
 			break;
-		case 's':
+		case NFSD_CMD_SOCK_SET:
 			if (sscanf(optarg, "%s %s %d %d",
 				   addr, transport, &port, &proto) != 4) {
 				usage(argv, long_options);
 				return 0;
 			}
-			nl_cmd = NFSD_CMD_SOCK_SET;
 			break;
-		case 'P':
-			nl_cmd = NFSD_CMD_LISTENER_GET;
-			break;
-		case 'h':
 		default:
-			usage(argv, long_options);
-			return 0;
+			break;
 		}
 	}
 
