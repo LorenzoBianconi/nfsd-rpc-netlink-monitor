@@ -16,7 +16,7 @@
 #include <netlink/attr.h>
 #include <linux/netlink.h>
 
-#include "nfsd_netlink.h"
+#include "nfsdctl.h"
 
 /* compile note:
  * gcc -I/usr/include/libnl3/ -o <prog-name> <prog-name>.c -lnl-3 -lnl-genl-3
