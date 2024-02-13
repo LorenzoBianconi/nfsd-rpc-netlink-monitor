@@ -311,76 +311,21 @@ static void usage(char *argv[], const struct option *long_options)
 }
 
 #define BUFFER_SIZE	8192
-int main(char argc, char **argv)
+static void *nl_sock_and_msg_alloc(struct nl_sock **psock, struct nl_msg **pmsg)
 {
-	int thread, nl_flags = 0, nl_cmd = 0, longindex = 0, opt, ret = 1, id;
-	int major, minor, port, proto;
-	char transport[64], addr[64];
 	struct nl_sock *sock;
 	struct nl_msg *msg;
-	struct nl_cb *cb;
-
-	if (argc == 1) {
-		usage(argv, long_options);
-		return -EINVAL;
-	}
-
-	while ((opt = getopt_long(argc, argv, "Rt:Tv:Vp:Ps:h",
-				  long_options, &longindex)) != -1) {
-		int cmd = get_cmd_type(opt);
-
-		if (cmd < 0) {
-			usage(argv, long_options);
-			return 0;
-		}
-
-		if (nl_cmd && cmd != nl_cmd) {
-			usage(argv, long_options);
-			return 0;
-		}
-
-		nl_cmd = cmd;
-
-		switch (nl_cmd) {
-		case NFSD_CMD_RPC_STATUS_GET:
-			nl_flags = NLM_F_DUMP;
-			break;
-		case NFSD_CMD_THREADS_SET:
-			thread = strtoul(optarg, NULL, 0);
-			break;
-		case NFSD_CMD_VERSION_SET:
-			if (sscanf(optarg, "%d %d", &major, &minor) != 2) {
-				usage(argv, long_options);
-				return 0;
-			}
-			break;
-		case NFSD_CMD_LISTENER_SET:
-			if (sscanf(optarg, "%s %d %d",
-				   transport, &port, &proto) != 3) {
-				usage(argv, long_options);
-				return 0;
-			}
-			break;
-		case NFSD_CMD_SOCK_SET:
-			if (sscanf(optarg, "%s %s %d %d",
-				   addr, transport, &port, &proto) != 4) {
-				usage(argv, long_options);
-				return 0;
-			}
-			break;
-		default:
-			break;
-		}
-	}
+	int ret, id;
+	void *hdr;
 
 	sock = nl_socket_alloc();
 	if (!sock)
-		return -ENOMEM;
+		return NULL;
 
 	if (genl_connect(sock)) {
 		fprintf(stderr, "Failed to connect to generic netlink\n");
-		ret = -ENOLINK;
-		goto out;
+		nl_socket_free(sock);
+		return NULL;
 	}
 
 	nl_socket_set_buffer_size(sock, BUFFER_SIZE, BUFFER_SIZE);
@@ -390,106 +335,187 @@ int main(char argc, char **argv)
 	id = genl_ctrl_resolve(sock, NFSD_FAMILY_NAME);
 	if (id < 0) {
 		fprintf(stderr, "%s not found\n", NFSD_FAMILY_NAME);
-		ret = -ENOENT;
-		goto out;
+		nl_socket_free(sock);
+		return NULL;
 	}
 
 	msg = nlmsg_alloc();
 	if (!msg) {
 		fprintf(stderr, "failed to allocate netlink message\n");
-		ret = -ENOMEM;
-		goto out;
+		nl_socket_free(sock);
+		return NULL;
 	}
+
+	hdr = genlmsg_put(msg, 0, 0, id, 0, 0, 0, 0);
+	if (!hdr) {
+		fprintf(stderr, "failed to allocate netlink message\n");
+		nl_socket_free(sock);
+		nlmsg_free(msg);
+		return NULL;
+	}
+
+	*psock = sock;
+	*pmsg = msg;
+
+	return hdr - GENL_HDRLEN;
+}
+
+int main(char argc, char **argv)
+{
+	int port, proto, nl_cmd = 0, longindex = 0, opt, ret = 1;
+	char transport[64], addr[64];
+	struct nl_sock *sock = NULL;
+	struct nl_msg *msg = NULL;
+	struct genlmsghdr *ghdr;
+	struct nl_cb *cb;
+
+	if (argc == 1) {
+		usage(argv, long_options);
+		return -EINVAL;
+	}
+
+	ghdr = nl_sock_and_msg_alloc(&sock, &msg);
+	if (!ghdr)
+		return -ENOMEM;
+
+	ret = EINVAL;
+	while ((opt = getopt_long(argc, argv, "Rt:Tv:Vp:Ps:h",
+				  long_options, &longindex)) != -1) {
+		int cmd = get_cmd_type(opt);
+
+		if (cmd < 0) {
+			usage(argv, long_options);
+			goto out;
+		}
+
+		if (nl_cmd && cmd != nl_cmd) {
+			usage(argv, long_options);
+			goto out;
+		}
+
+		nl_cmd = cmd;
+		switch (nl_cmd) {
+		case NFSD_CMD_RPC_STATUS_GET: {
+			struct nlmsghdr *nlh = (void *)ghdr - NLMSG_HDRLEN;
+
+			nlh->nlmsg_flags |= NLM_F_DUMP;
+			break;
+		}
+		case NFSD_CMD_THREADS_SET: {
+			int thread = strtoul(optarg, NULL, 0);
+
+			nla_put_u32(msg, NFSD_A_SERVER_WORKER_THREADS, thread);
+			break;
+		}
+		case NFSD_CMD_VERSION_SET: {
+			struct nlattr *a;
+			int major, minor;
+
+			if (sscanf(optarg, "%d.%d", &major, &minor) != 2) {
+				usage(argv, long_options);
+				goto out;
+			}
+
+
+			a = nla_nest_start(msg,
+					   NLA_F_NESTED | NFSD_A_SERVER_PROTO_VERSION);
+			if (!a) {
+				ret = -ENOMEM;
+				goto out;
+			}
+
+			nla_put_u32(msg, NFSD_A_VERSION_MAJOR, major);
+			nla_put_u32(msg, NFSD_A_VERSION_MINOR, minor);
+			nla_nest_end(msg, a);
+			break;
+		}
+		case NFSD_CMD_LISTENER_SET: {
+			struct nlattr *a;
+
+			if (sscanf(optarg, "%s.%d.%d",
+				   transport, &port, &proto) != 3) {
+				usage(argv, long_options);
+				goto out;
+			}
+
+
+			a = nla_nest_start(msg,
+					   NLA_F_NESTED | NFSD_A_SERVER_LISTENER_INSTANCE);
+			if (!a) {
+				ret = -ENOMEM;
+				goto out;
+			}
+			nla_put_string(msg, NFSD_A_LISTENER_TRANSPORT_NAME,
+				       transport);
+			nla_put_u32(msg, NFSD_A_LISTENER_PORT, port);
+			nla_put_u16(msg, NFSD_A_LISTENER_INET_PROTO, proto);
+			nla_nest_end(msg, a);
+			break;
+		}
+		case NFSD_CMD_SOCK_SET: {
+			struct sockaddr_storage sa_storage = {};
+			struct nlattr *a;
+
+			if (sscanf(optarg, "[%s].%s.%d.%d",
+				   addr, &port, transport, &proto) != 4) {
+				usage(argv, long_options);
+				goto out;
+			}
+
+			switch (proto) {
+			case AF_INET: {
+				struct sockaddr_in *sin = (void *)&sa_storage;
+
+				sin->sin_family = AF_INET;
+				sin->sin_port = htons(port);
+				if (inet_pton(AF_INET, addr,
+					      &sin->sin_addr) != 1) {
+					ret = -EINVAL;
+					goto out;
+				}
+				break;
+			}
+			case AF_INET6: {
+				struct sockaddr_in6 *sin6 = (void *)&sa_storage;
+
+				sin6->sin6_family = AF_INET6;
+				sin6->sin6_port = htons(port);
+				if (inet_pton(AF_INET6, addr,
+					      &sin6->sin6_addr) != 1) {
+					ret = -EINVAL;
+					goto out;
+				}
+				break;
+			}
+			default:
+				ret = -EINVAL;
+				goto out;
+			}
+
+			a = nla_nest_start(msg,
+					   NLA_F_NESTED | NFSD_A_SERVER_SOCK_ADDR);
+			if (!a) {
+				ret = -ENOMEM;
+				goto out_cb;
+			}
+			nla_put(msg, NFSD_A_SOCK_ADDR, sizeof(sa_storage),
+				&sa_storage);
+			nla_put_string(msg, NFSD_A_SOCK_TRANSPORT_NAME,
+				       transport);
+			nla_nest_end(msg, a);
+			break;
+		}
+		default:
+			break;
+		}
+	}
+	ghdr->cmd = nl_cmd;
 
 	cb = nl_cb_alloc(NL_CB_CUSTOM);
 	if (!cb) {
 		fprintf(stderr, "failed to allocate netlink callbacks\n");
 		ret = -ENOMEM;
 		goto out;
-	}
-
-	genlmsg_put(msg, 0, 0, id, 0, nl_flags, nl_cmd, 0);
-
-	switch (nl_cmd) {
-	case NFSD_CMD_THREADS_SET:
-		nla_put_u32(msg, NFSD_A_SERVER_WORKER_THREADS, thread);
-		break;
-	case NFSD_CMD_VERSION_SET: {
-		struct nlattr *a;
-
-		a = nla_nest_start(msg,
-				   NLA_F_NESTED | NFSD_A_SERVER_PROTO_VERSION);
-		if (!a) {
-			ret = -ENOMEM;
-			goto out;
-		}
-		nla_put_u32(msg, NFSD_A_VERSION_MAJOR, major);
-		nla_put_u32(msg, NFSD_A_VERSION_MINOR, minor);
-		nla_nest_end(msg, a);
-		break;
-	}
-	case NFSD_CMD_LISTENER_SET: {
-		struct nlattr *a;
-
-		a = nla_nest_start(msg,
-				   NLA_F_NESTED | NFSD_A_SERVER_LISTENER_INSTANCE);
-		if (!a) {
-			ret = -ENOMEM;
-			goto out;
-		}
-		nla_put_string(msg, NFSD_A_LISTENER_TRANSPORT_NAME,
-			       transport);
-		nla_put_u32(msg, NFSD_A_LISTENER_PORT, port);
-		nla_put_u16(msg, NFSD_A_LISTENER_INET_PROTO, proto);
-		nla_nest_end(msg, a);
-		break;
-	}
-	case NFSD_CMD_SOCK_SET: {
-		struct sockaddr_storage sa_storage = {};
-		struct nlattr *a;
-
-		switch (proto) {
-		case AF_INET: {
-			struct sockaddr_in *sin = (void *)&sa_storage;
-
-			sin->sin_family = AF_INET;
-			sin->sin_port = htons(port);
-			if (inet_pton(AF_INET, addr,  &sin->sin_addr) != 1) {
-				ret = -EINVAL;
-				goto out;
-			}
-			break;
-		}
-		case AF_INET6: {
-			struct sockaddr_in6 *sin6 = (void *)&sa_storage;
-
-			sin6->sin6_family = AF_INET6;
-			sin6->sin6_port = htons(port);
-			if (inet_pton(AF_INET6, addr, &sin6->sin6_addr) != 1) {
-				ret = -EINVAL;
-				goto out;
-			}
-			break;
-		}
-		default:
-			ret = -EINVAL;
-			goto out;
-		}
-
-		a = nla_nest_start(msg,
-				   NLA_F_NESTED | NFSD_A_SERVER_SOCK_ADDR);
-		if (!a) {
-			ret = -ENOMEM;
-			goto out;
-		}
-		nla_put(msg, NFSD_A_SOCK_ADDR, sizeof(sa_storage),
-			&sa_storage);
-		nla_put_string(msg, NFSD_A_SOCK_TRANSPORT_NAME, transport);
-		nla_nest_end(msg, a);
-		break;
-	}
-	default:
-		break;
 	}
 
 	ret = nl_send_auto_complete(sock, msg);
@@ -507,6 +533,8 @@ int main(char argc, char **argv)
 out_cb:
 	nl_cb_put(cb);
 out:
+	if (ret)
+		nlmsg_free(msg);
 	nl_socket_free(sock);
 	return ret;
 }
