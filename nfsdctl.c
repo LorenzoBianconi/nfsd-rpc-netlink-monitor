@@ -23,7 +23,7 @@
  */
 
 #define NFSD4_OPS_MAX_LEN	sizeof(nfsd4_ops) / sizeof(nfsd4_ops[0])
-static const char* nfsd4_ops[] = {
+static const char *nfsd4_ops[] = {
 	[OP_ACCESS]		= "OP_ACCESS",
 	[OP_CLOSE]		= "OP_CLOSE",
 	[OP_COMMIT]		= "OP_COMMIT",
@@ -311,62 +311,56 @@ static void usage(char *argv[], const struct option *long_options)
 }
 
 #define BUFFER_SIZE	8192
-static void *nl_sock_and_msg_alloc(struct nl_sock **psock, struct nl_msg **pmsg)
+static struct nl_msg *netlink_sock_and_msg_alloc(struct nl_sock **sock)
 {
-	struct nl_sock *sock;
-	struct nl_msg *msg;
+	struct nl_msg *msg = NULL;
 	int ret, id;
-	void *hdr;
 
-	sock = nl_socket_alloc();
-	if (!sock)
+	*sock = nl_socket_alloc();
+	if (!(*sock))
 		return NULL;
 
-	if (genl_connect(sock)) {
+	if (genl_connect(*sock)) {
 		fprintf(stderr, "Failed to connect to generic netlink\n");
-		nl_socket_free(sock);
-		return NULL;
+		goto error;
 	}
 
-	nl_socket_set_buffer_size(sock, BUFFER_SIZE, BUFFER_SIZE);
-	setsockopt(nl_socket_get_fd(sock), SOL_NETLINK, NETLINK_EXT_ACK,
+	nl_socket_set_buffer_size(*sock, BUFFER_SIZE, BUFFER_SIZE);
+	setsockopt(nl_socket_get_fd(*sock), SOL_NETLINK, NETLINK_EXT_ACK,
 		   &ret, sizeof(ret));
 
-	id = genl_ctrl_resolve(sock, NFSD_FAMILY_NAME);
+	id = genl_ctrl_resolve(*sock, NFSD_FAMILY_NAME);
 	if (id < 0) {
 		fprintf(stderr, "%s not found\n", NFSD_FAMILY_NAME);
-		nl_socket_free(sock);
-		return NULL;
+		goto error;
 	}
 
 	msg = nlmsg_alloc();
 	if (!msg) {
 		fprintf(stderr, "failed to allocate netlink message\n");
-		nl_socket_free(sock);
-		return NULL;
+		goto error;
 	}
 
-	hdr = genlmsg_put(msg, 0, 0, id, 0, 0, 0, 0);
-	if (!hdr) {
+	if (!genlmsg_put(msg, 0, 0, id, 0, 0, 0, 0)) {
 		fprintf(stderr, "failed to allocate netlink message\n");
-		nl_socket_free(sock);
-		nlmsg_free(msg);
-		return NULL;
+		goto error;
 	}
 
-	*psock = sock;
-	*pmsg = msg;
-
-	return hdr - GENL_HDRLEN;
+	return msg;
+error:
+	nl_socket_free(*sock);
+	nlmsg_free(msg);
+	return NULL;
 }
 
 int main(char argc, char **argv)
 {
 	int port, proto, nl_cmd = 0, longindex = 0, opt, ret = 1;
 	char transport[64], addr[64];
-	struct nl_sock *sock = NULL;
-	struct nl_msg *msg = NULL;
 	struct genlmsghdr *ghdr;
+	struct nlmsghdr *nlh;
+	struct nl_sock *sock;
+	struct nl_msg *msg;
 	struct nl_cb *cb;
 
 	if (argc == 1) {
@@ -374,14 +368,17 @@ int main(char argc, char **argv)
 		return -EINVAL;
 	}
 
-	ghdr = nl_sock_and_msg_alloc(&sock, &msg);
-	if (!ghdr)
+	msg = netlink_sock_and_msg_alloc(&sock);
+	if (!msg)
 		return -ENOMEM;
 
 	ret = EINVAL;
+	nlh = nlmsg_hdr(msg);
+
 	while ((opt = getopt_long(argc, argv, "Rt:Tv:Vp:Ps:h",
 				  long_options, &longindex)) != -1) {
 		int cmd = get_cmd_type(opt);
+		struct nlattr *a;
 
 		if (cmd < 0) {
 			usage(argv, long_options);
@@ -395,12 +392,9 @@ int main(char argc, char **argv)
 
 		nl_cmd = cmd;
 		switch (nl_cmd) {
-		case NFSD_CMD_RPC_STATUS_GET: {
-			struct nlmsghdr *nlh = (void *)ghdr - NLMSG_HDRLEN;
-
+		case NFSD_CMD_RPC_STATUS_GET:
 			nlh->nlmsg_flags |= NLM_F_DUMP;
 			break;
-		}
 		case NFSD_CMD_THREADS_SET: {
 			int thread = strtoul(optarg, NULL, 0);
 
@@ -408,7 +402,6 @@ int main(char argc, char **argv)
 			break;
 		}
 		case NFSD_CMD_VERSION_SET: {
-			struct nlattr *a;
 			int major, minor;
 
 			if (sscanf(optarg, "%d.%d", &major, &minor) != 2) {
@@ -429,9 +422,7 @@ int main(char argc, char **argv)
 			nla_nest_end(msg, a);
 			break;
 		}
-		case NFSD_CMD_LISTENER_SET: {
-			struct nlattr *a;
-
+		case NFSD_CMD_LISTENER_SET:
 			if (sscanf(optarg, "%s.%d.%d",
 				   transport, &port, &proto) != 3) {
 				usage(argv, long_options);
@@ -451,10 +442,8 @@ int main(char argc, char **argv)
 			nla_put_u16(msg, NFSD_A_LISTENER_INET_PROTO, proto);
 			nla_nest_end(msg, a);
 			break;
-		}
 		case NFSD_CMD_SOCK_SET: {
 			struct sockaddr_storage sa_storage = {};
-			struct nlattr *a;
 
 			if (sscanf(optarg, "[%s].%s.%d.%d",
 				   addr, &port, transport, &proto) != 4) {
@@ -509,6 +498,8 @@ int main(char argc, char **argv)
 			break;
 		}
 	}
+
+	ghdr = nlmsg_data(nlh);
 	ghdr->cmd = nl_cmd;
 
 	cb = nl_cb_alloc(NL_CB_CUSTOM);
