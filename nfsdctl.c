@@ -184,6 +184,9 @@ static void parse_version_get(struct genlmsghdr *gnlh)
 			case NFSD_A_VERSION_MINOR:
 				printf(":%d", nla_get_u32(a));
 				break;
+			case NFSD_A_VERSION_ENABLED:
+				printf("*");
+				break;
 			default:
 				break;
 			}
@@ -419,6 +422,7 @@ int main(char argc, char **argv)
 
 			nla_put_u32(msg, NFSD_A_VERSION_MAJOR, major);
 			nla_put_u32(msg, NFSD_A_VERSION_MINOR, minor);
+			nla_put_flag(msg, NFSD_A_VERSION_ENABLED);
 			nla_nest_end(msg, a);
 			break;
 		}
@@ -431,7 +435,7 @@ int main(char argc, char **argv)
 
 
 			a = nla_nest_start(msg,
-					   NLA_F_NESTED | NFSD_A_SERVER_LISTENER_INSTANCE);
+					   NLA_F_NESTED | NFSD_A_SERVER_LISTENER_ADDR);
 			if (!a) {
 				ret = -ENOMEM;
 				goto out;
